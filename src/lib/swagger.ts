@@ -16,12 +16,32 @@ const swaggerSpec = createSwaggerSpec({
     },
     servers: [
       {
-        url:
-          process.env.NODE_ENV === "production"
-            ? "https://your-vercel-app.vercel.app"
-            : "http://localhost:3000",
-        description:
-          process.env.NODE_ENV === "production" ? "Production" : "Development",
+        url: "http://localhost:3000",
+        description: "Local Development Server",
+      },
+      {
+        url: "https://vercel-blob-to-open-web-ui-knowledge-4l5rwgw0j.vercel.app",
+        description: "Production Server (Vercel)",
+      },
+      {
+        url: "{protocol}://{host}:{port}",
+        description: "Custom Server",
+        variables: {
+          protocol: {
+            enum: ["http", "https"],
+            default: "https",
+            description: "The protocol to use",
+          },
+          host: {
+            default: "your-domain.com",
+            description: "The hostname or IP address",
+          },
+          port: {
+            enum: ["3000", "3001", "8080", "80", "443"],
+            default: "443",
+            description: "The port number",
+          },
+        },
       },
     ],
     components: {

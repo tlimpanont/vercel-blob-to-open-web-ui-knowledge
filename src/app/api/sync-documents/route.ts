@@ -42,11 +42,7 @@ const createLogger = (requestId: string) => {
     route: "sync-documents",
   };
 
-  const emit = (
-    level: LogLevel,
-    message: string,
-    context: LogContext = {}
-  ) => {
+  const emit = (level: LogLevel, message: string, context: LogContext = {}) => {
     const entry = JSON.stringify({
       timestamp: new Date().toISOString(),
       level,
@@ -264,7 +260,18 @@ export async function POST(request: NextRequest) {
       logger.warn("Unauthorized sync attempt blocked", {
         hasAuthHeader: Boolean(authHeader),
       });
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        {
+          status: 401,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers":
+              "Content-Type, Authorization, X-Requested-With",
+          },
+        }
+      );
     }
 
     const {
@@ -286,7 +293,15 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json(
         { error: "Missing required environment variables" },
-        { status: 500 }
+        {
+          status: 500,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers":
+              "Content-Type, Authorization, X-Requested-With",
+          },
+        }
       );
     }
 
@@ -563,10 +578,14 @@ export async function POST(request: NextRequest) {
               };
             }
           } catch (collectionError: any) {
-            logger.error("Failed to add file to knowledge collection", collectionError, {
-              pathname: uploadedFile.pathname,
-              collectionId: KNOWLEDGE_COLLECTION_ID,
-            });
+            logger.error(
+              "Failed to add file to knowledge collection",
+              collectionError,
+              {
+                pathname: uploadedFile.pathname,
+                collectionId: KNOWLEDGE_COLLECTION_ID,
+              }
+            );
 
             if (resultIndex >= 0) {
               finalResults[resultIndex] = {
@@ -594,7 +613,9 @@ export async function POST(request: NextRequest) {
       logger.info("Phase 2 complete: knowledge collection assignment finished");
     } else {
       logger.info("Phase 2 skipped", {
-        reason: KNOWLEDGE_COLLECTION_ID ? "no-files-to-process" : "missing-collection-id",
+        reason: KNOWLEDGE_COLLECTION_ID
+          ? "no-files-to-process"
+          : "missing-collection-id",
       });
       // Set collection status to null for all results
       finalResults.forEach((result, index) => {
@@ -631,7 +652,14 @@ export async function POST(request: NextRequest) {
       durationMs: Date.now() - startedAt,
     });
 
-    return NextResponse.json(summary);
+    return NextResponse.json(summary, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Requested-With",
+      },
+    });
   } catch (error) {
     logger.error("Sync operation failed", error, {
       durationMs: Date.now() - startedAt,
@@ -642,18 +670,49 @@ export async function POST(request: NextRequest) {
         details: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers":
+            "Content-Type, Authorization, X-Requested-With",
+        },
+      }
     );
   }
 }
 
 export async function GET(request: NextRequest) {
-  return NextResponse.json({
-    message: "Vercel Blob to Open Web UI Sync Service",
-    endpoint: "/api/sync-documents",
-    method: "POST",
-    description:
-      "Syncs documents from Vercel Blob storage to Open Web UI Knowledge base",
-    lastUpdated: new Date().toISOString(),
+  return NextResponse.json(
+    {
+      message: "Vercel Blob to Open Web UI Sync Service",
+      endpoint: "/api/sync-documents",
+      method: "POST",
+      description:
+        "Syncs documents from Vercel Blob storage to Open Web UI Knowledge base",
+      lastUpdated: new Date().toISOString(),
+    },
+    {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Requested-With",
+      },
+    }
+  );
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, X-Requested-With",
+      "Access-Control-Max-Age": "86400",
+    },
   });
 }

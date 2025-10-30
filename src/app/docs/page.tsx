@@ -58,6 +58,21 @@ export default function APIDocsPage() {
     <div className="min-h-screen bg-white">
       {/* Swagger UI */}
       <div className="swagger-container">
+        {/* Server Selector Header */}
+        <div className="server-selector-header bg-blue-50 border-b border-blue-200 p-4">
+          <div className="max-w-7xl mx-auto">
+            <h3 className="text-lg font-semibold text-blue-900 mb-2">
+              🌐 API Server Selection
+            </h3>
+            <p className="text-blue-700 text-sm">
+              Use the server dropdown in the API specification below to switch
+              between development, production, or custom servers. This allows
+              you to test the API against different environments directly from
+              this documentation.
+            </p>
+          </div>
+        </div>
+
         <SwaggerUI
           spec={spec}
           docExpansion="list"
@@ -74,6 +89,14 @@ export default function APIDocsPage() {
       </div>
 
       <style jsx global>{`
+        .server-selector-header {
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+          backdrop-filter: blur(10px);
+        }
+
         .swagger-container {
           background: white;
         }
@@ -87,11 +110,35 @@ export default function APIDocsPage() {
         }
 
         .swagger-ui .scheme-container {
-          background: #f8f9fa;
-          border: 1px solid #e9ecef;
-          border-radius: 8px;
-          padding: 15px;
-          margin: 20px 0;
+          background: #f0f9ff !important;
+          border: 2px solid #3b82f6 !important;
+          border-radius: 12px !important;
+          padding: 20px !important;
+          margin: 20px 0 30px 0 !important;
+          box-shadow: 0 4px 6px rgba(59, 130, 246, 0.1) !important;
+        }
+
+        .swagger-ui .scheme-container .schemes-title {
+          color: #1e40af !important;
+          font-weight: 600 !important;
+          font-size: 16px !important;
+          margin-bottom: 10px !important;
+        }
+
+        .swagger-ui .scheme-container select {
+          background: white !important;
+          border: 2px solid #3b82f6 !important;
+          border-radius: 8px !important;
+          padding: 8px 12px !important;
+          font-size: 14px !important;
+          color: #1e40af !important;
+          min-width: 300px !important;
+        }
+
+        .swagger-ui .scheme-container select:focus {
+          outline: none !important;
+          border-color: #2563eb !important;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
         }
 
         .swagger-ui .opblock {
