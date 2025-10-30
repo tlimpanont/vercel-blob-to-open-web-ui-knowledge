@@ -2,6 +2,86 @@ import { NextRequest, NextResponse } from "next/server";
 import { list } from "@vercel/blob";
 import axios from "axios";
 
+type LogLevel = "info" | "warn" | "error" | "debug";
+
+interface LogContext {
+  [key: string]: unknown;
+}
+
+const serializeError = (error: unknown) => {
+  if (axios.isAxiosError(error)) {
+    return {
+      type: "AxiosError",
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      code: error.code,
+      method: error.config?.method,
+      url: error.config?.url,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      type: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  if (typeof error === "object" && error !== null) {
+    return error;
+  }
+
+  return { message: String(error) };
+};
+
+const createLogger = (requestId: string) => {
+  const baseContext = {
+    requestId,
+    route: "sync-documents",
+  };
+
+  const emit = (
+    level: LogLevel,
+    message: string,
+    context: LogContext = {}
+  ) => {
+    const entry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      ...baseContext,
+      ...context,
+    });
+
+    switch (level) {
+      case "error":
+        console.error(entry);
+        break;
+      case "warn":
+        console.warn(entry);
+        break;
+      default:
+        console.log(entry);
+    }
+  };
+
+  return {
+    info: (message: string, context?: LogContext) =>
+      emit("info", message, context),
+    warn: (message: string, context?: LogContext) =>
+      emit("warn", message, context),
+    debug: (message: string, context?: LogContext) =>
+      emit("debug", message, context),
+    error: (message: string, error?: unknown, context?: LogContext) =>
+      emit("error", message, {
+        ...context,
+        error: error ? serializeError(error) : undefined,
+      }),
+  };
+};
+
 interface BlobFile {
   url: string;
   pathname: string;
@@ -166,12 +246,24 @@ interface SyncResult {
  */
 
 export async function POST(request: NextRequest) {
+  const requestId = crypto.randomUUID();
+  const logger = createLogger(requestId);
+  const startedAt = Date.now();
+
+  logger.info("Sync request received", {
+    method: request.method,
+    url: request.url,
+  });
+
   try {
     // Verify cron secret for security
     const authHeader = request.headers.get("authorization");
     const cronSecret = process.env.CRON_SECRET;
 
     if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+      logger.warn("Unauthorized sync attempt blocked", {
+        hasAuthHeader: Boolean(authHeader),
+      });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -182,35 +274,46 @@ export async function POST(request: NextRequest) {
       KNOWLEDGE_COLLECTION_ID,
     } = process.env;
 
-    if (
-      !BLOB_READ_WRITE_TOKEN ||
-      !OPEN_WEB_UI_BASE_URL ||
-      !OPEN_WEB_UI_API_KEY
-    ) {
+    const missingEnvVars = [
+      !BLOB_READ_WRITE_TOKEN && "BLOB_READ_WRITE_TOKEN",
+      !OPEN_WEB_UI_BASE_URL && "OPEN_WEB_UI_BASE_URL",
+      !OPEN_WEB_UI_API_KEY && "OPEN_WEB_UI_API_KEY",
+    ].filter(Boolean) as string[];
+
+    if (missingEnvVars.length > 0) {
+      logger.error("Missing required environment variables", undefined, {
+        missingEnvVars,
+      });
       return NextResponse.json(
         { error: "Missing required environment variables" },
         { status: 500 }
       );
     }
 
-    console.log("Starting document sync from Vercel Blob to Open Web UI...");
+    logger.info("Starting document sync from Vercel Blob to Open Web UI");
 
     // List all files in blob storage
     const { blobs } = await list({
       token: BLOB_READ_WRITE_TOKEN,
     });
 
-    console.log(`Found ${blobs.length} files in blob storage`);
+    logger.info("Blob listing completed", { blobCount: blobs.length });
 
     // PHASE 1: Upload all files to Open Web UI
-    console.log("PHASE 1: Uploading files to Open Web UI...");
+    logger.info("Phase 1: uploading files to Open Web UI", {
+      blobCount: blobs.length,
+    });
     const uploadResults: SyncResult[] = [];
-    const uploadErrors = [];
+    const uploadErrors: Array<{ file: string; error: string }> = [];
     const uploadedFiles: UploadedFile[] = [];
 
     for (const blob of blobs) {
       try {
-        console.log(`Uploading file: ${blob.pathname}`);
+        logger.info("Uploading file", {
+          pathname: blob.pathname,
+          size: blob.size,
+          uploadedAt: blob.uploadedAt,
+        });
 
         // Get file content from Vercel Blob
         const response = await fetch(blob.url);
@@ -304,7 +407,10 @@ export async function POST(request: NextRequest) {
           throw new Error("Failed to get file ID from upload response");
         }
 
-        console.log(`✅ Uploaded: ${blob.pathname} → ID: ${fileId}`);
+        logger.info("File uploaded", {
+          pathname: blob.pathname,
+          openWebUIId: fileId,
+        });
 
         // Store for later processing
         uploadedFiles.push({
@@ -323,7 +429,10 @@ export async function POST(request: NextRequest) {
           uploadedAt: blob.uploadedAt,
         });
       } catch (error) {
-        console.error(`❌ Upload failed: ${blob.pathname}`, error);
+        logger.error("File upload failed", error, {
+          pathname: blob.pathname,
+          size: blob.size,
+        });
         uploadErrors.push({
           file: blob.pathname,
           error: error instanceof Error ? error.message : "Unknown error",
@@ -331,27 +440,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log(
-      `PHASE 1 Complete: ${uploadedFiles.length} files uploaded, ${uploadErrors.length} failed`
-    );
+    logger.info("Phase 1 complete", {
+      uploaded: uploadedFiles.length,
+      failed: uploadErrors.length,
+    });
 
     // PHASE 2: Wait for processing and add to knowledge collection
     const finalResults: SyncResult[] = [...uploadResults];
 
     if (KNOWLEDGE_COLLECTION_ID && uploadedFiles.length > 0) {
-      console.log("PHASE 2: Adding processed files to knowledge collection...");
-      console.log(`Waiting for files to be processed by Open Web UI...`);
+      logger.info("Phase 2: adding processed files to knowledge collection", {
+        knowledgeCollectionId: KNOWLEDGE_COLLECTION_ID,
+        filesToProcess: uploadedFiles.length,
+      });
+
+      const processingDelayMs = 5000;
+      logger.debug("Waiting for Open Web UI processing window", {
+        delayMs: processingDelayMs,
+      });
 
       // Give Open Web UI time to process the files
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, processingDelayMs));
 
       for (let i = 0; i < uploadedFiles.length; i++) {
         const uploadedFile = uploadedFiles[i];
-        console.log(
-          `Processing ${i + 1}/${uploadedFiles.length}: ${
-            uploadedFile.pathname
-          }`
-        );
+        logger.info("Processing uploaded file", {
+          index: i + 1,
+          total: uploadedFiles.length,
+          pathname: uploadedFile.pathname,
+        });
 
         try {
           // Check file processing status with retries
@@ -378,24 +495,27 @@ export async function POST(request: NextRequest) {
                 fileData.data?.content &&
                 fileData.data.content.trim().length > 0;
 
+              logger.debug("Checked file processing status", {
+                pathname: uploadedFile.pathname,
+                attempt: attempts,
+                isProcessed,
+                hasContent,
+              });
+
               if (isProcessed && hasContent) {
                 fileReady = true;
-                console.log(
-                  `✅ File ready: ${uploadedFile.pathname} (${fileData.data.content.length} chars extracted)`
-                );
-              } else {
-                console.log(
-                  `⏳ File processing... ${uploadedFile.pathname} (attempt ${attempts}/${maxAttempts})`
-                );
-                if (attempts < maxAttempts) {
-                  await new Promise((resolve) => setTimeout(resolve, 3000));
-                }
+                logger.info("File ready for collection", {
+                  pathname: uploadedFile.pathname,
+                  contentLength: fileData.data.content.length,
+                });
+              } else if (attempts < maxAttempts) {
+                await new Promise((resolve) => setTimeout(resolve, 3000));
               }
             } catch (statusError) {
-              console.error(
-                `Error checking status for ${uploadedFile.pathname}:`,
-                statusError
-              );
+              logger.error("Failed to check processing status", statusError, {
+                pathname: uploadedFile.pathname,
+                attempt: attempts,
+              });
               break;
             }
           }
@@ -406,9 +526,9 @@ export async function POST(request: NextRequest) {
           );
 
           if (!fileReady) {
-            console.log(
-              `⚠️  File not ready for collection: ${uploadedFile.pathname}`
-            );
+            logger.warn("File not ready for collection", {
+              pathname: uploadedFile.pathname,
+            });
             if (resultIndex >= 0) {
               finalResults[resultIndex] = {
                 ...finalResults[resultIndex],
@@ -420,7 +540,7 @@ export async function POST(request: NextRequest) {
 
           // Try to add to knowledge collection
           try {
-            const addToCollectionResponse = await axios.post(
+            await axios.post(
               `${OPEN_WEB_UI_BASE_URL}/api/v1/knowledge/${KNOWLEDGE_COLLECTION_ID}/file/add`,
               { file_id: uploadedFile.id },
               {
@@ -431,7 +551,10 @@ export async function POST(request: NextRequest) {
               }
             );
 
-            console.log(`🎯 Added to collection: ${uploadedFile.pathname}`);
+            logger.info("File added to knowledge collection", {
+              pathname: uploadedFile.pathname,
+              collectionId: KNOWLEDGE_COLLECTION_ID,
+            });
 
             if (resultIndex >= 0) {
               finalResults[resultIndex] = {
@@ -440,13 +563,10 @@ export async function POST(request: NextRequest) {
               };
             }
           } catch (collectionError: any) {
-            console.error(
-              `❌ Collection add failed: ${uploadedFile.pathname}`,
-              {
-                status: collectionError.response?.status,
-                data: collectionError.response?.data,
-              }
-            );
+            logger.error("Failed to add file to knowledge collection", collectionError, {
+              pathname: uploadedFile.pathname,
+              collectionId: KNOWLEDGE_COLLECTION_ID,
+            });
 
             if (resultIndex >= 0) {
               finalResults[resultIndex] = {
@@ -456,10 +576,9 @@ export async function POST(request: NextRequest) {
             }
           }
         } catch (error) {
-          console.error(
-            `❌ Processing failed: ${uploadedFile.pathname}`,
-            error
-          );
+          logger.error("Processing failed for uploaded file", error, {
+            pathname: uploadedFile.pathname,
+          });
           const resultIndex = finalResults.findIndex(
             (r) => r.openWebUIId === uploadedFile.id
           );
@@ -472,9 +591,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      console.log("PHASE 2 Complete: Knowledge collection assignment finished");
+      logger.info("Phase 2 complete: knowledge collection assignment finished");
     } else {
-      console.log("PHASE 2 Skipped: No knowledge collection ID provided");
+      logger.info("Phase 2 skipped", {
+        reason: KNOWLEDGE_COLLECTION_ID ? "no-files-to-process" : "missing-collection-id",
+      });
       // Set collection status to null for all results
       finalResults.forEach((result, index) => {
         finalResults[index] = {
@@ -502,16 +623,19 @@ export async function POST(request: NextRequest) {
       errors: uploadErrors,
     };
 
-    console.log("🎉 Sync completed:", {
-      total: summary.totalFiles,
+    logger.info("Sync completed successfully", {
+      totalFiles: summary.totalFiles,
       uploaded: summary.successful,
       failed: summary.failed,
       addedToCollection: summary.addedToCollection,
+      durationMs: Date.now() - startedAt,
     });
 
     return NextResponse.json(summary);
   } catch (error) {
-    console.error("❌ Sync operation failed:", error);
+    logger.error("Sync operation failed", error, {
+      durationMs: Date.now() - startedAt,
+    });
     return NextResponse.json(
       {
         error: "Sync operation failed",
