@@ -39,13 +39,24 @@ export default function Home() {
 
           <div className="space-y-3">
             <Link
-              href="/api/sync-documents"
-              className="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+              href="/docs"
+              className="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors mr-4"
             >
-              View Sync Endpoint
+              📖 API Documentation (Swagger UI)
+            </Link>
+
+            <Link
+              href="/api/sync-documents"
+              className="inline-block bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors"
+            >
+              🔗 View Sync Endpoint
             </Link>
 
             <div className="text-sm text-gray-600 mt-4">
+              <p>
+                <strong>API Documentation:</strong> View dynamically generated
+                documentation for all API endpoints.
+              </p>
               <p>
                 <strong>Note:</strong> This is a backend service. The frontend
                 interface is provided by your Open Web UI instance.

@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/sync-documents",
-      "schedule": "0 * * * *"
+      "schedule": "*/10 * * * *"
     }
   ]
 }
